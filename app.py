@@ -1,116 +1,41 @@
-import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Tablero Operativo Lux", layout="wide")
+st.set_page_config(page_title="Autolux - Control de Stock y Ventas", layout="wide")
 
-DATA_DIR = "."
+st.title("Autolux S.A. - Tablero de Control de Inventario y Posventa")
+st.caption("Datos correspondientes al cierre contable de Septiembre 2026")
 
-@st.cache_data
-def listar_archivos(directorio):
-    if not os.path.exists(directorio):
-        return []
-    return [f for f in os.listdir(directorio) if f.endswith((".xlsx", ".xls"))]
+tabs = st.tabs(["Consolidado General", "Lux Salta", "Lux Jujuy", "Lux Las Lajitas", "Lux Tartagal", "Plan VDOM"])
 
-archivos = listar_archivos(DATA_DIR)
-
-st.sidebar.title("Navegación y Filtros")
-
-if not archivos:
-    st.error(f"No se encontraron archivos en la carpeta '{DATA_DIR}/'. Asegúrate de copiarlos allí.")
-    st.stop()
-
-# Clasificación de archivos según nombre
-categorias = {
-    "Lubricantes": [f for f in archivos if "Lubricantes" in f],
-    "Repuestos": [f for f in archivos if "Repuestos" in f],
-    "Cuadros V, D, O, M": [f for f in archivos if "Cuadro" in f]
+# Datos consolidados del cuadro VDOM (en Millones de ARS - Reposición)
+data_vdom = {
+    "Sucursal": ["Salta", "Jujuy", "Las Lajitas"],
+    "Vivo": [1000.41, 542.62, 165.00],
+    "Durmiente": [139.52, 43.58, 8.13],
+    "Obsoleto": [54.01, 31.20, 10.17],
+    "Muerto": [414.81, 319.89, 55.35],
+    "Total_Items": [3608, 3369, 682]
 }
+df_vdom = pd.DataFrame(data_vdom)
+df_vdom["Total_Stock"] = df_vdom["Vivo"] + df_vdom["Durmiente"] + df_vdom["Obsoleto"] + df_vdom["Muerto"]
 
-tipo_vista = st.sidebar.selectbox("Línea de Análisis", list(categorias.keys()))
-archivos_tipo = categorias[tipo_vista]
+with tabs[0]:
+    st.subheader("Estado General del Stock")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Stock Total", f"${df_vdom['Total_Stock'].sum():,.2f} M")
+    c2.metric("Stock Vivo", f"${df_vdom['Vivo'].sum():,.2f} M", f"{(df_vdom['Vivo'].sum()/df_vdom['Total_Stock'].sum())*100:.1f}%")
+    c3.metric("Stock Durmiente/Obs.", f"${(df_vdom['Durmiente'].sum() + df_vdom['Obsoleto'].sum()):,.2f} M")
+    c4.metric("Stock Muerto", f"${df_vdom['Muerto'].sum():,.2f} M", f"{(df_vdom['Muerto'].sum()/df_vdom['Total_Stock'].sum())*100:.1f}%", delta_color="inverse")
 
-# Identificar sucursal a partir del nombre de archivo
-sucursales_disp = []
-for f in archivos_tipo:
-    for suc in ["Jujuy", "Salta", "Las Lajitas", "Tartagal"]:
-        if suc in f and suc not in sucursales_disp:
-            sucursales_disp.append(suc)
+    df_melt = df_vdom.melt(id_vars=["Sucursal"], value_vars=["Vivo", "Durmiente", "Obsoleto", "Muerto"], var_name="Estado", value_name="Monto_M")
+    fig = px.bar(df_melt, x="Sucursal", y="Monto_M", color="Estado", title="Composición del Stock por Sucursal (Millones $)", barmode="stack")
+    st.plotly_chart(fig, use_container_width=True)
 
-sucursal_sel = st.sidebar.multiselect(
-    "Seleccionar Sucursal(es)", 
-    options=sucursales_disp, 
-    default=sucursales_disp
-)
-
-st.title(f"Tablero de Control - {tipo_vista}")
-
-def cargar_datos(archivos_filtrados):
-    frames = []
-    for f in archivos_filtrados:
-        ruta = os.path.join(DATA_DIR, f)
-        # Extraer sucursal del nombre de archivo
-        sucursal = "General"
-        for s in ["Jujuy", "Salta", "Las Lajitas", "Tartagal"]:
-            if s in f:
-                sucursal = s
-                break
-        try:
-            excel = pd.ExcelFile(ruta)
-            # Lee la primera pestaña por defecto
-            df = pd.read_excel(excel, sheet_name=excel.sheet_names[0])
-            df["Sucursal"] = sucursal
-            df["Archivo_Origen"] = f
-            frames.append(df)
-        except Exception as e:
-            st.warning(f"Error al leer {f}: {e}")
-    if frames:
-        return pd.concat(frames, ignore_index=True)
-    return pd.DataFrame()
-
-# Filtrar archivos por sucursales seleccionadas
-archivos_a_cargar = [
-    f for f in archivos_tipo 
-    if any(suc in f for suc in sucursal_sel)
-]
-
-if archivos_a_cargar:
-    df_consolidado = cargar_datos(archivos_a_cargar)
-
-    if not df_consolidado.empty:
-        # Métricas rápidas
-        cols_num = df_consolidado.select_dtypes(include=["number"]).columns.tolist()
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Registros", f"{len(df_consolidado):,}")
-        col1.caption(f"Archivos procesados: {len(archivos_a_cargar)}")
-
-        if cols_num:
-            # Selector de métrica principal para KPI y gráficos
-            col_metrica = st.sidebar.selectbox("Columna Métrica a Graficar", cols_num)
-            
-            total_val = df_consolidado[col_metrica].sum()
-            prom_val = df_consolidado[col_metrica].mean()
-            col2.metric(f"Total {col_metrica}", f"{total_val:,.2f}")
-            col3.metric(f"Promedio {col_metrica}", f"{prom_val:,.2f}")
-
-            # Gráfico de barras por sucursal
-            st.subheader(f"Distribución de {col_metrica} por Sucursal")
-            resumen_suc = df_consolidado.groupby("Sucursal")[col_metrica].sum().reset_index()
-            fig = px.bar(
-                resumen_suc, 
-                x="Sucursal", 
-                y=col_metrica, 
-                color="Sucursal",
-                text_auto=True,
-                title=f"{col_metrica} consolidado por Sucursal"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Vista Detallada de Datos")
-        st.dataframe(df_consolidado, use_container_width=True)
-    else:
-        st.info("No se pudieron cargar datos de los archivos seleccionados.")
-else:
-    st.info("Selecciona al menos una sucursal para visualizar información.")
+with tabs[5]:
+    st.subheader("Plan de Acción sobre Stock Inmovilizado")
+    st.markdown("""
+    - **Monitoreo de $790M en Stock Muerto:** Establecer campañas de liquidación para el 50% de ítems con más de 12 meses sin movimiento.
+    - **Reasignación Inter-sucursal:** Identificar piezas con clasificación 'Muerto' en Las Lajitas o Jujuy que registren demanda periódica en Salta antes de emitir compras a fábrica.
+    """)
