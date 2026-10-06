@@ -5,7 +5,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="Tablero Operativo Lux", layout="wide")
 
-DATA_DIR = "data"
+DATA_DIR = "."
 
 @st.cache_data
 def listar_archivos(directorio):
